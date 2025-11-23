@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: chemical-viz-backend
+    env: python
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn chemical_viz_project.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

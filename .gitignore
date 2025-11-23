@@ -43,3 +43,4 @@ chemical-viz-frontend/build/
 # Environment
 .env
 .env.local
+.env.development
