@@ -6,11 +6,12 @@ from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import UploadedDataset
 from .serializers import UploadedDatasetSerializer
 from django.db import IntegrityError
 from django.http import HttpResponse
+from django.contrib.auth.models import User
 
 # --- ReportLab Imports for PDF Generation ---
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
@@ -26,7 +27,52 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from io import BytesIO
 import base64
-# -----------------------------------
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        username = request.data.get('username')
+        password = request.data.get('password')
+        email = request.data.get('email', '')
+
+        if not username or not password:
+            return Response(
+                {"error": "Username and password are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(password) < 6:
+            return Response(
+                {"error": "Password must be at least 6 characters long"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(username=username).exists():
+            return Response(
+                {"error": "Username already exists"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.create_user(
+                username=username,
+                password=password,
+                email=email
+            )
+            return Response(
+                {
+                    "message": "User registered successfully",
+                    "username": user.username
+                },
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Registration failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class HistoryListView(ListAPIView):
     serializer_class = UploadedDatasetSerializer

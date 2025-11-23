@@ -1,8 +1,9 @@
 from django.urls import path
-from .views import HistoryListView, CSVUploadView, SummaryView, PDFReportView
+from .views import HistoryListView, CSVUploadView, SummaryView, PDFReportView, RegisterView
 
 urlpatterns = [
-    # GET: List latest 5 uploaded datasets (History)
+    path('register/', RegisterView.as_view(), name='user-register'),
+    
     path('history/', HistoryListView.as_view(), name='data-history'),
     
     # POST: Handle file upload and data processing

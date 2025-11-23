@@ -198,6 +198,27 @@
   color: var(--accent);
 }
 
+.auth-toggle {
+  margin-top: var(--spacing-lg);
+  text-align: center;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: var(--spacing-sm);
+  transition: opacity 0.2s ease;
+}
+
+.btn-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
 /* ==================== DASHBOARD ==================== */
 .dashboard {
   height: 100vh;

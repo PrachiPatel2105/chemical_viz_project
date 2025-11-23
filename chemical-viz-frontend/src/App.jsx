@@ -35,12 +35,14 @@ ChartJS.register(
 export default function App() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
   const [authenticated, setAuthenticated] = useState(false);
   const [alert, setAlert] = useState(null);
   const [history, setHistory] = useState([]);
   const [selectedHistory, setSelectedHistory] = useState(null);
   const [summary, setSummary] = useState(null);
   const [activeTab, setActiveTab] = useState("charts");
+  const [isRegistering, setIsRegistering] = useState(false);
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
 
@@ -68,6 +70,35 @@ export default function App() {
       setHistory(res.data || []);
     } catch (err) {
       setAlert({ type: "error", text: "Invalid credentials or server error" });
+      console.error(err);
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setAlert(null);
+
+    if (password.length < 6) {
+      setAlert({ type: "error", text: "Password must be at least 6 characters long" });
+      return;
+    }
+
+    try {
+      const res = await api.post("/api/register/", {
+        username,
+        password,
+        email,
+      });
+
+      setAlert({ type: "success", text: res.data.message || "Registration successful! Please login." });
+      setTimeout(() => {
+        setIsRegistering(false);
+        setPassword("");
+        setEmail("");
+      }, 2000);
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || "Registration failed";
+      setAlert({ type: "error", text: errorMsg });
       console.error(err);
     }
   };
@@ -200,8 +231,10 @@ export default function App() {
             <div className="login-icon">
               <FileText color="white" size={32} />
             </div>
-            <h1 className="login-title">Welcome Back</h1>
-            <p className="login-subtitle">Sign in to Chemical Data Visualizer</p>
+            <h1 className="login-title">{isRegistering ? "Create Account" : "Welcome Back"}</h1>
+            <p className="login-subtitle">
+              {isRegistering ? "Register for Chemical Data Visualizer" : "Sign in to Chemical Data Visualizer"}
+            </p>
           </div>
 
           {alert && (
@@ -210,7 +243,7 @@ export default function App() {
             </div>
           )}
 
-          <form onSubmit={handleLogin}>
+          <form onSubmit={isRegistering ? handleRegister : handleLogin}>
             <div className="form-group">
               <label className="form-label">Username</label>
               <input
@@ -219,8 +252,22 @@ export default function App() {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter your username"
                 className="form-input"
+                required
               />
             </div>
+
+            {isRegistering && (
+              <div className="form-group">
+                <label className="form-label">Email (Optional)</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Enter your email"
+                  className="form-input"
+                />
+              </div>
+            )}
 
             <div className="form-group">
               <label className="form-label">Password</label>
@@ -228,15 +275,31 @@ export default function App() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                placeholder={isRegistering ? "At least 6 characters" : "Enter your password"}
                 className="form-input"
+                required
               />
             </div>
 
             <button type="submit" className="btn-primary">
-              Sign in
+              {isRegistering ? "Create Account" : "Sign in"}
             </button>
           </form>
+
+          <div className="auth-toggle">
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(!isRegistering);
+                setAlert(null);
+                setPassword("");
+                setEmail("");
+              }}
+              className="btn-link"
+            >
+              {isRegistering ? "Already have an account? Sign in" : "Don't have an account? Register"}
+            </button>
+          </div>
         </div>
       </div>
     );
