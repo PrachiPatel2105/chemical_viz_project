@@ -1,524 +1,604 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import axios from 'axios';
-import { LogIn, Upload, History, FileText, BarChart, PieChart, Loader2, ServerOff, CheckCircle } from 'lucide-react';
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement } from 'chart.js';
-import { Bar, Doughnut } from 'react-chartjs-2';
+import { useState, useEffect, useRef } from "react";
+import axios from "axios";
+import "./App.css";
 
-// Register Chart.js components
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
+import { Bar, Doughnut } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
 
-// --- Configuration ---
-const API_BASE_URL = 'http://127.0.0.1:8000/api';
+import {
+  UploadCloud,
+  FileText,
+  Trash2,
+  Download,
+  CheckCircle,
+  BarChart3,
+  Table,
+} from "lucide-react";
 
-// --- Utility Components ---
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend
+);
 
-/** A simple component to display error or status messages. */
-const Message = ({ type, children }) => {
-  const bgColor = type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-500' : 'bg-blue-500';
-  const Icon = type === 'success' ? CheckCircle : type === 'error' ? ServerOff : Loader2;
-  // Determine animation class based on type
-  const animationClass = type === 'info' ? 'animate-pulse' : ''; 
-  
-  return (
-    <div className={`p-3 rounded-lg shadow-md flex items-center space-x-3 ${bgColor} text-white`}>
-      <Icon className={`w-5 h-5 ${animationClass}`} />
-      <p className="font-medium text-sm">{children}</p>
-    </div>
-  );
-};
-
-/**
- * Main application component.
- * Manages authentication, state, and rendering of all sub-sections.
- */
-const App = () => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authHeader, setAuthHeader] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  
+export default function App() {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [authenticated, setAuthenticated] = useState(false);
+  const [alert, setAlert] = useState(null);
   const [history, setHistory] = useState([]);
-  const [currentSummary, setCurrentSummary] = useState(null);
-  const [selectedDatasetId, setSelectedDatasetId] = useState(null);
-
-  const [uploadFile, setUploadFile] = useState(null);
-  const [statusMessage, setStatusMessage] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [activeTab, setActiveTab] = useState("charts");
   const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
 
-  // --- Authentication Handler ---
+  const api = axios.create({
+    baseURL: "http://127.0.0.1:8000",
+  });
+
+  useEffect(() => {
+    if (authenticated) fetchHistory();
+  }, [authenticated]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setStatusMessage(null);
-    setIsLoading(true);
+    setAlert(null);
 
     try {
-      const authString = btoa(`${username}:${password}`);
-      const headers = {
-        Authorization: `Basic ${authString}`,
-      };
-      
-      // Attempt to access a protected endpoint (history) to verify credentials
-      await axios.get(`${API_BASE_URL}/history/`, { headers });
+      const token = btoa(`${username}:${password}`);
 
-      // If successful:
-      setAuthHeader(`Basic ${authString}`);
-      setIsLoggedIn(true);
-      setStatusMessage({ type: 'success', text: 'Login successful! Welcome.' });
-      
-    } catch (error) {
-      console.error('Login failed:', error);
-      setStatusMessage({ type: 'error', text: 'Login failed. Check username and password.' });
-    } finally {
-      setIsLoading(false);
+      const res = await api.get("/api/history/", {
+        headers: { Authorization: `Basic ${token}` },
+      });
+
+      setAuthenticated(true);
+      setAlert({ type: "success", text: "Login successful" });
+      setHistory(res.data || []);
+    } catch (err) {
+      setAlert({ type: "error", text: "Invalid credentials or server error" });
+      console.error(err);
     }
   };
-  
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setAuthHeader('');
-    setUsername('');
-    setPassword('');
-    setHistory([]);
-    setCurrentSummary(null);
-    setSelectedDatasetId(null);
-    setStatusMessage(null);
+  const fetchHistory = async () => {
+    try {
+      const token = btoa(`${username}:${password}`);
+      const res = await api.get("/api/history/", {
+        headers: { Authorization: `Basic ${token}` },
+      });
+
+      setHistory(res.data || []);
+    } catch (err) {
+      setAlert({ type: "error", text: "Failed to load history" });
+    }
   };
 
-  // --- API Handlers (Protected) ---
-
-  const fetchHistory = useCallback(async () => {
-    if (!authHeader) return;
-    try {
-      const response = await axios.get(`${API_BASE_URL}/history/`, {
-        headers: { Authorization: authHeader }
-      });
-      setHistory(response.data);
-    } catch (error) {
-      console.error('Failed to fetch history:', error);
-      setStatusMessage({ type: 'error', text: 'Failed to load history data.' });
-    }
-  }, [authHeader]);
-
-  const handleFileUpload = async (e) => {
-    e.preventDefault();
-    if (!uploadFile) {
-      setStatusMessage({ type: 'error', text: 'Please select a file first.' });
-      return;
-    }
-    
-    setStatusMessage({ type: 'info', text: 'Uploading and analyzing data...' });
-    setIsLoading(true);
-
-    const formData = new FormData();
-    formData.append('file', uploadFile);
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    setUploading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/upload/`, formData, {
-        headers: { 
-          Authorization: authHeader,
-          'Content-Type': 'multipart/form-data'
-        }
+      const form = new FormData();
+      form.append("file", file);
+
+      const token = btoa(`${username}:${password}`);
+
+      const uploadResponse = await api.post("/api/upload/", form, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+          Authorization: `Basic ${token}`,
+        },
       });
-      
-      setStatusMessage({ type: 'success', text: `Upload success: ${response.data.name}. Processing complete.` });
-      setUploadFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      
-      // Auto-refresh history and load new summary
+
+      setAlert({ type: "success", text: "File uploaded successfully" });
       await fetchHistory();
-      setSelectedDatasetId(response.data.id);
-      fetchSummary(response.data.id);
       
-    } catch (error) {
-      console.error('Upload error:', error);
-      const errorMessage = error.response?.data?.error || 'An unexpected error occurred during upload.';
-      setStatusMessage({ type: 'error', text: `Upload failed: ${errorMessage}` });
+      const newDataset = uploadResponse.data;
+      if (newDataset && newDataset.id) {
+        setSelectedHistory(newDataset);
+        await fetchSummary(newDataset.id);
+      }
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || "Upload failed";
+      setAlert({ type: "error", text: errorMsg });
+      console.error("Upload error:", err);
     } finally {
-      setIsLoading(false);
+      setUploading(false);
     }
+  };
+
+  const onFileSelected = (e) => {
+    handleFileUpload(e.target.files?.[0]);
+    e.target.value = null;
   };
 
   const fetchSummary = async (id) => {
-    if (!authHeader) return;
-    setStatusMessage(null);
-    setIsLoading(true);
-    setSelectedDatasetId(id);
-    setCurrentSummary(null); // Clear old data
+    if (!id) return;
 
     try {
-      const response = await axios.get(`${API_BASE_URL}/summary/${id}/`, {
-        headers: { Authorization: authHeader }
+      const token = btoa(`${username}:${password}`);
+      const res = await api.get(`/api/summary/?id=${id}`, {
+        headers: { Authorization: `Basic ${token}` },
       });
-      setCurrentSummary(response.data);
-      setStatusMessage({ type: 'success', text: `Loaded summary for dataset ID ${id}.` });
-    } catch (error) {
-      console.error('Failed to fetch summary:', error);
-      setStatusMessage({ type: 'error', text: 'Failed to retrieve dataset summary.' });
-    } finally {
-      setIsLoading(false);
+
+      setSummary(res.data);
+    } catch (err) {
+      setAlert({ type: "error", text: "Failed to fetch summary" });
     }
   };
-  
-  const handleDownloadPDF = async (id) => {
-    if (!authHeader) return;
-    setStatusMessage({ type: 'info', text: 'Generating PDF report...' });
 
+  const handleDownloadPDF = async (id) => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/report/${id}/`, {
-        headers: { Authorization: authHeader },
-        responseType: 'blob', // Important for file downloads
+      const token = btoa(`${username}:${password}`);
+
+      const res = await api.get(`/api/report/?id=${id}`, {
+        headers: { Authorization: `Basic ${token}` },
+        responseType: "blob",
       });
 
-      // Create a link element to trigger the download
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = 'report.pdf';
-      if (contentDisposition) {
-          const filenameMatch = contentDisposition.match(/filename="(.+)"/);
-          if (filenameMatch.length === 2) {
-              filename = filenameMatch[1];
-          }
-      }
-
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement("a");
       link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
+      link.download = `report-${id}.pdf`;
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url);
-      
-      setStatusMessage({ type: 'success', text: `PDF Report downloaded successfully as ${filename}.` });
-
-    } catch (error) {
-      console.error('PDF Download error:', error);
-      setStatusMessage({ type: 'error', text: 'Failed to generate or download PDF report.' });
+    } catch (err) {
+      setAlert({ type: "error", text: "Failed to download PDF" });
     }
   };
 
-  // --- Effects ---
+  const buildBarData = (data) =>
+    data
+      ? {
+          labels: data.labels || [],
+          datasets: [
+            {
+              label: data.title || "Values",
+              data: data.values || [],
+              backgroundColor: "#6366f1",
+              borderRadius: 6,
+            },
+          ],
+        }
+      : { labels: [], datasets: [] };
 
-  useEffect(() => {
-    if (isLoggedIn) {
-      fetchHistory();
-      // Auto-load the newest summary on login/refresh
-      if (history.length > 0 && !selectedDatasetId) {
-        setSelectedDatasetId(history[0].id);
-        fetchSummary(history[0].id);
-      }
-    }
-  }, [isLoggedIn, fetchHistory]);
-  
-  // --- Memoized Chart Data ---
-  
-  const chartData = useMemo(() => {
-    if (!currentSummary) return { type: {}, averages: {} };
-    
-    // 1. Type Distribution Data (Bar Chart)
-    const typeDistribution = currentSummary.type_distribution || {};
-    const typeLabels = Object.keys(typeDistribution);
-    const typeCounts = Object.values(typeDistribution);
-    
-    // Random color generation for chart segments
-    const generateColors = (count) => {
-      const colors = ['#8b5cf6', '#a78bfa', '#c4b5fd', '#ddd6fe', '#a8dadc', '#457b9d', '#1d3557', '#e63946'];
-      return typeLabels.map((_, index) => colors[index % colors.length]);
-    };
-    
-    const typeDistributionData = {
-      labels: typeLabels,
-      datasets: [{
-        label: 'Count',
-        data: typeCounts,
-        backgroundColor: generateColors(typeLabels.length),
-        borderColor: '#1f2937',
-        borderWidth: 1,
-      }]
-    };
-    
-    // 2. Averages Data (Doughnut Chart)
-    const averages = currentSummary.averages || {};
-    const avgLabels = ['Flowrate', 'Pressure', 'Temperature'];
-    const avgValues = [averages.flowrate, averages.pressure, averages.temperature].map(v => parseFloat(v).toFixed(2));
-    
-    const averagesData = {
-      labels: avgLabels,
-      datasets: [{
-        label: 'Average Value',
-        data: avgValues,
-        backgroundColor: ['#f87171', '#34d399', '#60a5fa'], // Red, Green, Blue tones
-        borderColor: '#1f2937',
-        borderWidth: 1,
-      }]
-    };
-    
-    return {
-      type: typeDistributionData,
-      averages: averagesData
-    };
-  }, [currentSummary]);
+  const buildDoughnutData = (data) =>
+    data
+      ? {
+          labels: data.categories || [],
+          datasets: [
+            {
+              data: data.counts || [],
+              backgroundColor: [
+                "#6366f1",
+                "#8b5cf6",
+                "#ec4899",
+                "#f59e0b",
+                "#10b981",
+              ],
+            },
+          ],
+        }
+      : { labels: [], datasets: [] };
 
-  // --- Rendering ---
-  
-  // Renders the Login View
-  if (!isLoggedIn) {
+  if (!authenticated) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-        <form onSubmit={handleLogin} className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md border border-gray-700">
-          <div className="flex items-center space-x-3 mb-8">
-            <LogIn className="w-8 h-8 text-indigo-400" />
-            <h1 className="text-3xl font-extrabold text-indigo-300">API Login</h1>
-          </div>
-          
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-400 mb-1" htmlFor="username">Username</label>
-            <input
-              type="text"
-              id="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-white"
-              required
-              disabled={isLoading}
-            />
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-header">
+            <div className="login-icon">
+              <FileText color="white" size={32} />
+            </div>
+            <h1 className="login-title">Welcome Back</h1>
+            <p className="login-subtitle">Sign in to Chemical Data Visualizer</p>
           </div>
 
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-400 mb-1" htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-white"
-              required
-              disabled={isLoading}
-            />
-          </div>
-          
-          <button
-            type="submit"
-            className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-semibold transition-colors duration-200 flex items-center justify-center disabled:opacity-50"
-            disabled={isLoading}
-          >
-            {isLoading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <LogIn className="w-5 h-5 mr-2" />}
-            {isLoading ? 'Authenticating...' : 'Log In'}
-          </button>
-          
-          {statusMessage && <div className="mt-6"><Message type={statusMessage.type}>{statusMessage.text}</Message></div>}
-          
-          <p className="mt-8 text-xs text-gray-500 text-center">Uses Basic Authentication against the Django API.</p>
-        </form>
+          {alert && (
+            <div className={`alert ${alert.type === "success" ? "alert-success" : "alert-error"}`}>
+              {alert.text}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <label className="form-label">Username</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter your username"
+                className="form-input"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your password"
+                className="form-input"
+              />
+            </div>
+
+            <button type="submit" className="btn-primary">
+              Sign in
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
 
-  // Renders the Main Application View
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      {/* Header */}
-      <header className="bg-gray-800 p-4 shadow-lg border-b border-gray-700">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <h1 className="text-xl md:text-2xl font-bold text-indigo-400">
-            Chemical Parameter Visualizer
-          </h1>
-          <button
-            onClick={handleLogout}
-            className="text-sm px-3 py-1 bg-red-600 hover:bg-red-700 rounded-lg transition-colors duration-200 flex items-center"
-          >
-            <LogIn className="w-4 h-4 mr-1" /> Logout
-          </button>
+    <div className="app">
+      <header className="header">
+        <div className="header-brand">
+          <div className="header-icon">
+            <FileText color="white" size={20} />
+          </div>
+          <div>
+            <div className="header-title">Chemical Data Visualizer</div>
+            <div className="header-subtitle">Upload, analyze, and visualize datasets</div>
+          </div>
         </div>
+
+        <button
+          onClick={() => {
+            setAuthenticated(false);
+            setUsername("");
+            setPassword("");
+          }}
+          className="btn-secondary"
+        >
+          Sign out
+        </button>
       </header>
 
-      <div className="max-w-7xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-4 gap-8">
-        
-        {/* Left Sidebar: Upload & History */}
-        <aside className="lg:col-span-1 space-y-8">
+      <div className="main-layout">
+        <aside className="sidebar">
+          <div className="sidebar-section">
+            <h4 className="sidebar-title">Upload Files</h4>
             
-          {/* Status Message */}
-          {statusMessage && <Message type={statusMessage.type}>{statusMessage.text}</Message>}
-            
-          {/* File Upload Form */}
-          <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-            <h2 className="text-lg font-semibold mb-4 flex items-center text-indigo-300">
-              <Upload className="w-5 h-5 mr-2" /> Upload New Dataset
-            </h2>
-            <form onSubmit={handleFileUpload} className="space-y-4">
-              <input
-                type="file"
-                ref={fileInputRef}
-                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                onChange={(e) => setUploadFile(e.target.files[0])}
-                className="w-full text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-500 file:text-white hover:file:bg-indigo-600"
-                required
-                disabled={isLoading}
-              />
-              <button
-                type="submit"
-                className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white font-semibold transition-colors duration-200 flex items-center justify-center disabled:opacity-50"
-                disabled={isLoading || !uploadFile}
-              >
-                {isLoading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Upload className="w-5 h-5 mr-2" />}
-                {isLoading ? 'Analyzing...' : 'Upload & Analyze'}
-              </button>
-            </form>
-          </section>
+            <div className="upload-card">
+              <label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  style={{ display: "none" }}
+                  onChange={onFileSelected}
+                  accept=".csv,.json"
+                />
+                <div className="upload-content">
+                  <div className="upload-icon">
+                    <UploadCloud color="white" size={20} />
+                  </div>
+                  <div className="upload-text">
+                    <div className="upload-title">Upload dataset</div>
+                    <div className="upload-subtitle">CSV / JSON files</div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="btn-upload"
+                >
+                  <UploadCloud size={16} />
+                  Choose File
+                </button>
+              </label>
+            </div>
+          </div>
 
-          {/* History List */}
-          <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-            <h2 className="text-lg font-semibold mb-4 flex items-center text-indigo-300">
-              <History className="w-5 h-5 mr-2" /> History (Last 5)
-            </h2>
-            {history.length === 0 ? (
-              <p className="text-gray-400">No upload history found.</p>
-            ) : (
-              <ul className="space-y-2">
-                {history.map((dataset) => (
-                  <li 
-                    key={dataset.id}
-                    onClick={() => fetchSummary(dataset.id)}
-                    className={`p-3 rounded-lg cursor-pointer transition-colors duration-150 ${
-                      dataset.id === selectedDatasetId 
-                        ? 'bg-indigo-600 text-white shadow-md' 
-                        : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    }`}
+          <div className="sidebar-section">
+            <h4 className="sidebar-title">History</h4>
+            <div className="history-list">
+              {history.length === 0 ? (
+                <div className="empty-state">No uploads yet</div>
+              ) : (
+                history.map((h) => (
+                  <div
+                    key={h.id}
+                    onClick={() => {
+                      setSelectedHistory(h);
+                      fetchSummary(h.id);
+                    }}
+                    className={`history-item ${selectedHistory?.id === h.id ? "selected" : ""}`}
                   >
-                    <p className="font-medium text-sm truncate">{dataset.name}</p>
-                    <p className="text-xs opacity-80">{new Date(dataset.timestamp).toLocaleString()}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
+                    <div className="history-content">
+                      <div className="history-info">
+                        <div className="history-name">
+                          {h.name || `Upload #${h.id}`}
+                        </div>
+                        <div className="history-date">
+                          {new Date(h.timestamp).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="history-actions">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadPDF(h.id);
+                          }}
+                          className="btn-icon success"
+                        >
+                          <Download size={16} />
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const token = btoa(`${username}:${password}`);
+                              await api.delete(`/api/history/${h.id}/`, {
+                                headers: { Authorization: `Basic ${token}` },
+                              });
+                              fetchHistory();
+                            } catch (err) {
+                              setAlert({ type: "error", text: "Delete failed" });
+                            }
+                          }}
+                          className="btn-icon error"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </aside>
 
-        {/* Main Content: Summary & Visualization */}
-        <main className="lg:col-span-3 space-y-8">
-          
-          {currentSummary ? (
-            <>
-              <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 flex justify-between items-center flex-wrap">
-                <h2 className="text-2xl font-bold text-gray-100">
-                  Visualization Summary: {history.find(h => h.id === selectedDatasetId)?.name || '...'}
-                </h2>
-                <button
-                  onClick={() => handleDownloadPDF(selectedDatasetId)}
-                  className="mt-4 sm:mt-0 py-2 px-4 bg-purple-600 hover:bg-purple-700 rounded-lg text-white font-semibold flex items-center transition-colors duration-200 disabled:opacity-50"
-                  disabled={isLoading}
-                >
-                  <FileText className="w-5 h-5 mr-2" /> Download PDF Report
-                </button>
-              </div>
-
-              {/* Statistical Averages Table */}
-              <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                <h3 className="text-xl font-semibold mb-4 text-indigo-300">Parameter Averages</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {Object.entries(currentSummary.averages || {}).map(([key, value]) => (
-                    <div key={key} className="p-4 bg-gray-700 rounded-lg text-center shadow">
-                      <p className="text-sm text-gray-400 uppercase">{key}</p>
-                      <p className="text-3xl font-bold text-green-400 mt-1">
-                        {parseFloat(value).toFixed(2)}
-                      </p>
-                    </div>
-                  ))}
+        <main className="content">
+          <div className="summary-card">
+            <div className="summary-header">
+              <div>
+                <div className="summary-title">Selected Dataset</div>
+                <div className="summary-subtitle">
+                  {selectedHistory?.name || "Select a file from history to view analytics"}
                 </div>
-              </section>
+              </div>
+              {selectedHistory && (
+                <button
+                  onClick={() => handleDownloadPDF(selectedHistory.id)}
+                  className="btn-download"
+                >
+                  <Download size={16} />
+                  Download PDF
+                </button>
+              )}
+            </div>
 
-              {/* Charts Grid */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                
-                {/* 1. Equipment Type Distribution Bar Chart */}
-                <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                  <h3 className="text-xl font-semibold mb-4 flex items-center text-indigo-300">
-                    <BarChart className="w-5 h-5 mr-2" /> Equipment Type Distribution
-                  </h3>
-                  <div className="h-80">
-                    <Bar
-                      data={chartData.type}
-                      options={{
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                          legend: { display: false },
-                          title: { display: false },
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-label">Total Records</div>
+                <div className="stat-value success">
+                  {summary?.records ?? "—"}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Unique Categories</div>
+                <div className="stat-value accent">
+                  {summary?.categories?.length ?? "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="tab-navigation">
+            <button
+              onClick={() => setActiveTab("charts")}
+              className={`tab-button ${activeTab === "charts" ? "active" : ""}`}
+            >
+              <BarChart3 size={16} />
+              Charts & Analytics
+            </button>
+            <button
+              onClick={() => setActiveTab("data")}
+              className={`tab-button ${activeTab === "data" ? "active" : ""}`}
+            >
+              <Table size={16} />
+              Data Table & Statistics
+            </button>
+          </div>
+
+          {activeTab === "charts" && (
+            <div className="charts-grid">
+              <div className="chart-card">
+                <div className="chart-title">Bar Chart Analysis</div>
+                <div className="chart-container">
+                  <Bar
+                    data={buildBarData(summary?.bar)}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                          backgroundColor: "#0f172a",
+                          titleColor: "#ffffff",
+                          bodyColor: "#ffffff",
+                          borderColor: "#6366f1",
+                          borderWidth: 1,
+                          padding: 10,
+                          cornerRadius: 6,
                         },
-                        scales: {
-                          y: { grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#ccc' } },
-                          x: { grid: { display: false }, ticks: { color: '#ccc' } }
-                        }
-                      }}
-                    />
-                  </div>
-                </section>
-                
-                {/* 2. Parameter Averages Doughnut Chart */}
-                <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                  <h3 className="text-xl font-semibold mb-4 flex items-center text-indigo-300">
-                    <PieChart className="w-5 h-5 mr-2" /> Relative Parameter Magnitudes
-                  </h3>
-                  <div className="h-80 flex items-center justify-center">
-                    <div className="w-full max-w-xs">
-                      <Doughnut 
-                        data={chartData.averages}
-                        options={{
-                          responsive: true,
-                          maintainAspectRatio: false,
-                          plugins: {
-                            legend: { position: 'right', labels: { color: '#ccc' } },
-                            title: { display: false },
+                      },
+                      scales: {
+                        x: {
+                          ticks: { color: "#94a3b8", font: { size: 11 } },
+                          grid: { color: "rgba(255, 255, 255, 0.05)" },
+                        },
+                        y: {
+                          ticks: { color: "#94a3b8", font: { size: 11 } },
+                          grid: { color: "rgba(255, 255, 255, 0.05)" },
+                        },
+                      },
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="chart-card">
+                <div className="chart-title">Category Distribution</div>
+                <div className="chart-container">
+                  <Doughnut
+                    data={buildDoughnutData(summary?.doughnut)}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: {
+                          position: "bottom",
+                          labels: {
+                            color: "#ffffff",
+                            padding: 12,
+                            font: { size: 11 },
                           },
-                        }}
-                      />
+                        },
+                        tooltip: {
+                          backgroundColor: "#0f172a",
+                          titleColor: "#ffffff",
+                          bodyColor: "#ffffff",
+                          borderColor: "#6366f1",
+                          borderWidth: 1,
+                          padding: 10,
+                          cornerRadius: 6,
+                        },
+                      },
+                    }}
+                  />
+                </div>
+              </div>
+
+              {summary?.averages && (
+                <div className="chart-card full-width">
+                  <div className="chart-title">Parameter Averages</div>
+                  <div className="averages-grid">
+                    <div className="average-item">
+                      <div className="average-label">Flowrate</div>
+                      <div className="average-value">{summary.averages.flowrate?.toFixed(2) || "0.00"}</div>
+                      <div className="average-unit">L/min</div>
+                    </div>
+                    <div className="average-item">
+                      <div className="average-label">Pressure</div>
+                      <div className="average-value">{summary.averages.pressure?.toFixed(2) || "0.00"}</div>
+                      <div className="average-unit">bar</div>
+                    </div>
+                    <div className="average-item">
+                      <div className="average-label">Temperature</div>
+                      <div className="average-value">{summary.averages.temperature?.toFixed(2) || "0.00"}</div>
+                      <div className="average-unit">°C</div>
                     </div>
                   </div>
-                </section>
-                
-              </div>
-              
-              {/* Data Preview Table */}
-              <section className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 overflow-x-auto">
-                <h3 className="text-xl font-semibold mb-4 text-indigo-300">Data Preview (First 5 Rows)</h3>
-                <table className="min-w-full divide-y divide-gray-700">
-                  <thead>
-                    <tr className="text-xs font-medium tracking-wider text-gray-400 uppercase">
-                      <th className="px-6 py-3 text-left">Equipment Name</th>
-                      <th className="px-6 py-3 text-left">Type</th>
-                      <th className="px-6 py-3 text-right">Flowrate</th>
-                      <th className="px-6 py-3 text-right">Pressure</th>
-                      <th className="px-6 py-3 text-right">Temperature</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700">
-                    {(currentSummary.data_preview || []).map((row, index) => (
-                      <tr key={index} className="hover:bg-gray-700 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{row['Equipment Name']}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{row['Type']}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono text-cyan-400">{row['Flowrate'].toFixed(2)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono text-yellow-400">{row['Pressure'].toFixed(2)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono text-orange-400">{row['Temperature'].toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
+                </div>
+              )}
+            </div>
+          )}
 
-            </>
-          ) : (
-            <div className="min-h-[60vh] flex items-center justify-center">
-              <p className="text-gray-400 text-center text-xl p-8 bg-gray-800 rounded-xl border border-gray-700">
-                <span className="font-bold text-indigo-400">Upload a CSV/Excel file</span> or select a dataset from the history to view the analysis and visualization.
-              </p>
+          {activeTab === "data" && (
+            <div className="data-section">
+              {summary?.data_preview && summary.data_preview.length > 0 ? (
+                <>
+                  <div className="data-card">
+                    <div className="data-title">Data Preview (First 5 Rows)</div>
+                    <div className="table-container">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Equipment Name</th>
+                            <th>Type</th>
+                            <th>Flowrate (L/min)</th>
+                            <th>Pressure (bar)</th>
+                            <th>Temperature (°C)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.data_preview.map((row, index) => (
+                            <tr key={index}>
+                              <td>{row["Equipment Name"] || "N/A"}</td>
+                              <td>{row["Type"] || "N/A"}</td>
+                              <td>{typeof row["Flowrate"] === 'number' ? row["Flowrate"].toFixed(2) : "N/A"}</td>
+                              <td>{typeof row["Pressure"] === 'number' ? row["Pressure"].toFixed(2) : "N/A"}</td>
+                              <td>{typeof row["Temperature"] === 'number' ? row["Temperature"].toFixed(2) : "N/A"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="statistics-grid">
+                    <div className="stat-detail-card">
+                      <div className="stat-detail-title">Dataset Statistics</div>
+                      <div className="stat-detail-content">
+                        <div className="stat-row">
+                          <span className="stat-label">Total Records:</span>
+                          <span className="stat-value">{summary.records || 0}</span>
+                        </div>
+                        <div className="stat-row">
+                          <span className="stat-label">Equipment Types:</span>
+                          <span className="stat-value">{summary.categories?.length || 0}</span>
+                        </div>
+                        <div className="stat-row">
+                          <span className="stat-label">Avg Flowrate:</span>
+                          <span className="stat-value">{summary.averages?.flowrate?.toFixed(2) || "0.00"} L/min</span>
+                        </div>
+                        <div className="stat-row">
+                          <span className="stat-label">Avg Pressure:</span>
+                          <span className="stat-value">{summary.averages?.pressure?.toFixed(2) || "0.00"} bar</span>
+                        </div>
+                        <div className="stat-row">
+                          <span className="stat-label">Avg Temperature:</span>
+                          <span className="stat-value">{summary.averages?.temperature?.toFixed(2) || "0.00"} °C</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="stat-detail-card">
+                      <div className="stat-detail-title">Equipment Type Distribution</div>
+                      <div className="stat-detail-content">
+                        {summary.bar?.labels?.map((label, index) => (
+                          <div key={index} className="stat-row">
+                            <span className="stat-label">{label}:</span>
+                            <span className="stat-value">{summary.bar.values[index]} units</span>
+                          </div>
+                        )) || <div className="stat-row">No data available</div>}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-data-state">
+                  <Table size={48} color="#6b7280" />
+                  <div className="empty-data-title">No Data Available</div>
+                  <div className="empty-data-subtitle">
+                    Upload a CSV file to view data tables and statistics
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </main>
       </div>
+
+      <div className="status-badge">
+        <CheckCircle color="#22c55e" size={16} />
+        <span className="status-text">Connected</span>
+      </div>
     </div>
   );
-};
-
-export default App;
+}

@@ -12,101 +12,92 @@ from .serializers import UploadedDatasetSerializer
 from django.db import IntegrityError
 from django.http import HttpResponse
 
-# --- ReportLab Imports for Phase 3 ---
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+# --- ReportLab Imports for PDF Generation ---
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.units import inch
+
+# --- Matplotlib Imports for Chart Generation ---
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from io import BytesIO
+import base64
 # -----------------------------------
 
 class HistoryListView(ListAPIView):
-    """
-    API endpoint to list the latest 5 uploaded datasets for the authenticated user.
-    Uses the ordering defined in the model (newest first).
-    """
     serializer_class = UploadedDatasetSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Retrieve only the last 5 datasets for the current authenticated user
         return UploadedDataset.objects.filter(user=self.request.user)[:5]
+    
+    def delete(self, request, pk, *args, **kwargs):
+        dataset = get_object_or_404(UploadedDataset, pk=pk, user=request.user)
+        
+        if dataset.file_path and os.path.exists(dataset.file_path):
+            try:
+                os.remove(dataset.file_path)
+            except OSError:
+                pass
+        
+        dataset.delete()
+        return Response({"message": "Dataset deleted successfully"}, status=status.HTTP_200_OK)
 
 
 class CSVUploadView(APIView):
-    """
-    API endpoint to handle CSV file upload, perform data analysis using Pandas,
-    and save the data and summary to the database.
-    """
     permission_classes = [IsAuthenticated]
     
-    # Required columns for the analysis
     REQUIRED_COLUMNS = ['Equipment Name', 'Type', 'Flowrate', 'Pressure', 'Temperature']
 
     def post(self, request, *args, **kwargs):
-        # 1. Check for file presence
         if 'file' not in request.FILES:
             return Response({"error": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
         
         uploaded_file = request.FILES['file']
         
-        # Simple check for CSV mime type (can be unreliable, but good practice)
         if not uploaded_file.name.endswith(('.csv', '.xlsx')):
              return Response({"error": "Unsupported file format. Please upload a CSV or Excel file."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. File Storage
-        # Create a unique filename: user_id/original_filename
         filename = f"{request.user.id}_{uploaded_file.name}"
         file_path = os.path.join(settings.MEDIA_ROOT, filename)
 
         try:
-            # Save the file to disk
             with open(file_path, 'wb+') as destination:
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
             
-            # 3. Data Processing and Analysis with Pandas
-            
-            # Read the file based on extension
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(file_path)
             elif uploaded_file.name.endswith('.xlsx'):
                 df = pd.read_excel(file_path)
             else:
-                # Should be caught by the file extension check, but safe to include
                 return Response({"error": "Invalid file format."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # --- CRITICAL FIX: Clean up column names by stripping whitespace ---
             df.columns = df.columns.str.strip()
-            # ------------------------------------------------------------------
 
-            # Validate columns
             if not all(col in df.columns for col in self.REQUIRED_COLUMNS):
                 missing_cols = [col for col in self.REQUIRED_COLUMNS if col not in df.columns]
-                # Delete the saved file before returning error
                 os.remove(file_path) 
                 return Response(
                     {"error": "Missing required columns in the dataset.", "missing": missing_cols},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Ensure numeric columns are actually numeric
             numeric_cols = ['Flowrate', 'Pressure', 'Temperature']
             for col in numeric_cols:
-                # Coerce to numeric, turning non-numeric into NaN
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-                # Drop rows where critical numeric data is missing after coercion
                 df.dropna(subset=[col], inplace=True)
 
-            # Perform required analysis
             total_count = len(df)
             
-            # Calculate averages, converting results to float/dict for JSON serialization
             avg_flowrate = float(df['Flowrate'].mean()) if total_count > 0 else 0.0
             avg_pressure = float(df['Pressure'].mean()) if total_count > 0 else 0.0
             avg_temperature = float(df['Temperature'].mean()) if total_count > 0 else 0.0
             
-            # Calculate type distribution
             type_distribution = df['Type'].value_counts().to_dict()
 
             summary_data = {
@@ -117,15 +108,14 @@ class CSVUploadView(APIView):
                     "temperature": avg_temperature
                 },
                 "type_distribution": type_distribution,
-                "data_preview": df.head(5).to_dict('records') # Optional: A small data preview
+                "data_preview": df.head(5).to_dict('records')
             }
             
-            # 4. Save Metadata to Database
             dataset = UploadedDataset.objects.create(
                 user=request.user,
                 name=uploaded_file.name,
                 summary_data=summary_data,
-                file_path=file_path  # Stores the absolute path on disk
+                file_path=file_path
             )
             
             serializer = UploadedDatasetSerializer(dataset)
@@ -133,11 +123,9 @@ class CSVUploadView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         except pd.errors.EmptyDataError:
-            # Delete the saved file if it's empty
             os.remove(file_path) 
             return Response({"error": "The uploaded file is empty or corrupted."}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            # General cleanup for errors after file save but before DB commit
             if os.path.exists(file_path):
                  os.remove(file_path)
             return Response({"error": f"An unexpected error occurred during processing: {str(e)}"}, 
@@ -145,50 +133,165 @@ class CSVUploadView(APIView):
 
 
 class SummaryView(APIView):
-    """
-    API endpoint to retrieve the summary_data for a specific dataset ID (pk).
-    """
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, pk, *args, **kwargs):
-        # Ensure the user only retrieves their own dataset
-        dataset = get_object_or_404(UploadedDataset, pk=pk, user=request.user)
+    def get(self, request, pk=None, *args, **kwargs):
+        dataset_id = pk or request.GET.get('id')
         
-        # Return only the summary_data field
-        return Response(dataset.summary_data, status=status.HTTP_200_OK)
+        if not dataset_id:
+            return Response({"error": "Dataset ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        dataset = get_object_or_404(UploadedDataset, pk=dataset_id, user=request.user)
+        
+        summary = dataset.summary_data
+        
+        response_data = {
+            "records": summary.get("total_records", 0),
+            "categories": list(summary.get("type_distribution", {}).keys()),
+            "bar": {
+                "title": "Equipment Type Distribution",
+                "labels": list(summary.get("type_distribution", {}).keys()),
+                "values": list(summary.get("type_distribution", {}).values())
+            },
+            "doughnut": {
+                "categories": list(summary.get("type_distribution", {}).keys()),
+                "counts": list(summary.get("type_distribution", {}).values())
+            },
+            "averages": summary.get("averages", {}),
+            "data_preview": summary.get("data_preview", [])
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class PDFReportView(APIView):
-    """
-    Implements the PDF Report Generation logic using ReportLab.
-    Generates a PDF summarizing dataset averages and type distribution.
-    """
     permission_classes = [IsAuthenticated]
+    
+    def create_bar_chart(self, distribution_data, title="Equipment Type Distribution"):
+        plt.style.use('default')
+        fig, ax = plt.subplots(figsize=(8, 5))
+        fig.patch.set_facecolor('white')
+        
+        if not distribution_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=14, color='gray')
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        else:
+            sorted_items = sorted(distribution_data.items(), key=lambda x: x[1], reverse=True)
+            labels, values = zip(*sorted_items) if sorted_items else ([], [])
+            
+            bars = ax.bar(labels, values, color=['#2563eb', '#7c3aed', '#dc2626', '#059669', '#d97706', '#0891b2', '#be185d'])
+            
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Equipment Type', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Count', fontsize=12, fontweight='bold')
+            
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.05,
+                       f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+            
+            plt.xticks(rotation=45, ha='right')
+            
+        plt.tight_layout()
+        
+        img_buffer = BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return img_buffer
+    
+    def create_pie_chart(self, distribution_data, title="Equipment Type Distribution"):
+        plt.style.use('default')
+        fig, ax = plt.subplots(figsize=(7, 7))
+        fig.patch.set_facecolor('white')
+        
+        if not distribution_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=14, color='gray')
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        else:
+            labels = list(distribution_data.keys())
+            sizes = list(distribution_data.values())
+            
+            colors_palette = ['#2563eb', '#7c3aed', '#dc2626', '#059669', '#d97706', '#0891b2', '#be185d', '#6366f1']
+            
+            wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct='%1.1f%%', 
+                                            colors=colors_palette[:len(labels)],
+                                            startangle=90, textprops={'fontsize': 10})
+            
+            for autotext in autotexts:
+                autotext.set_color('white')
+                autotext.set_fontweight('bold')
+            
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        
+        plt.tight_layout()
+        
+        # Save to BytesIO
+        img_buffer = BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return img_buffer
+    
+    def create_averages_chart(self, averages_data, title="Parameter Averages"):
+        plt.style.use('default')
+        fig, ax = plt.subplots(figsize=(8, 4))
+        fig.patch.set_facecolor('white')
+        
+        if not averages_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=14, color='gray')
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+        else:
+            parameters = list(averages_data.keys())
+            values = list(averages_data.values())
+            
+            bars = ax.barh(parameters, values, color=['#059669', '#dc2626', '#d97706'])
+            
+            ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+            ax.set_xlabel('Average Value', fontsize=12, fontweight='bold')
+            
+            for i, (bar, value) in enumerate(zip(bars, values)):
+                ax.text(bar.get_width() + max(values) * 0.01, bar.get_y() + bar.get_height()/2,
+                       f'{value:.2f}', ha='left', va='center', fontweight='bold')
+            
+            ax.set_yticklabels([param.capitalize() for param in parameters])
+        
+        plt.tight_layout()
+        
+        # Save to BytesIO
+        img_buffer = BytesIO()
+        plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close()
+        
+        return img_buffer
 
-    def get(self, request, pk, *args, **kwargs):
-        # 1. Fetch the dataset metadata
-        dataset = get_object_or_404(UploadedDataset, pk=pk, user=request.user)
+    def get(self, request, pk=None, *args, **kwargs):
+        dataset_id = pk or request.GET.get('id')
+        
+        if not dataset_id:
+            return Response({"error": "Dataset ID is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        dataset = get_object_or_404(UploadedDataset, pk=dataset_id, user=request.user)
         summary = dataset.summary_data
 
-        # 2. Configure the HTTP Response for PDF download
         response = HttpResponse(content_type='application/pdf')
         filename = f"Report_{dataset.name.split('.')[0]}_{dataset.timestamp.strftime('%Y%m%d')}.pdf"
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
 
-        # 3. Initialize ReportLab Document
-        # Use SimpleDocTemplate for easy flowable management
         doc = SimpleDocTemplate(response, pagesize=letter)
         styles = getSampleStyleSheet()
         story = []
 
-        # Define custom styles (Renaming to avoid conflicts with ReportLab defaults)
         styles.add(ParagraphStyle(name='ReportTitle', fontSize=18, spaceAfter=20, alignment=1, fontName='Helvetica-Bold'))
         styles.add(ParagraphStyle(name='CustomHeading', fontSize=14, spaceBefore=15, spaceAfter=10, fontName='Helvetica-Bold'))
         styles.add(ParagraphStyle(name='NormalStyle', fontSize=10, spaceAfter=5))
         
-        # --- PDF Content Generation ---
-        
-        # A. Title and Metadata
         title_text = f"Chemical Equipment Parameter Report"
         story.append(Paragraph(title_text, styles['ReportTitle']))
         
@@ -197,59 +300,80 @@ class PDFReportView(APIView):
         story.append(Paragraph(f"<b>Timestamp:</b> {dataset.timestamp.strftime('%Y-%m-%d %H:%M:%S')}", styles['NormalStyle']))
         story.append(Paragraph(f"<b>Total Records Processed:</b> {summary.get('total_records', 'N/A')}", styles['NormalStyle']))
         
-        story.append(Spacer(1, 0.5 * inch))
+        story.append(Spacer(1, 0.3 * inch))
         
-        # B. Average Parameters Table
-        story.append(Paragraph("Parameter Averages", styles['CustomHeading']))
+        # B. Parameter Averages Chart
+        story.append(Paragraph("Parameter Averages Analysis", styles['CustomHeading']))
         
         averages = summary.get('averages', {})
-        avg_data = [
-            ['Parameter', 'Average Value'],
-            ['Flowrate', f"{averages.get('flowrate', 0.0):.2f}"],
-            ['Pressure', f"{averages.get('pressure', 0.0):.2f}"],
-            ['Temperature', f"{averages.get('temperature', 0.0):.2f}"],
-        ]
+        if averages:
+            # Create and add averages chart
+            avg_chart_buffer = self.create_averages_chart(averages, "Parameter Averages")
+            avg_chart_img = Image(avg_chart_buffer, width=6*inch, height=3*inch)
+            story.append(avg_chart_img)
+            story.append(Spacer(1, 0.2 * inch))
+            
+            # Add summary table below chart
+            avg_data = [
+                ['Parameter', 'Average Value', 'Unit'],
+                ['Flowrate', f"{averages.get('flowrate', 0.0):.2f}", 'L/min'],
+                ['Pressure', f"{averages.get('pressure', 0.0):.2f}", 'bar'],
+                ['Temperature', f"{averages.get('temperature', 0.0):.2f}", '°C'],
+            ]
+            
+            avg_table = Table(avg_data, colWidths=[2*inch, 1.5*inch, 1*inch])
+            avg_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ]))
+            story.append(avg_table)
         
-        # Define table style
-        avg_table = Table(avg_data, colWidths=[2 * inch, 2 * inch])
-        avg_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        story.append(avg_table)
+        story.append(Spacer(1, 0.4 * inch))
         
-        story.append(Spacer(1, 0.5 * inch))
-        
-        # C. Equipment Type Distribution Table
-        story.append(Paragraph("Equipment Type Distribution", styles['CustomHeading']))
+        # C. Equipment Type Distribution Charts
+        story.append(Paragraph("Equipment Type Distribution Analysis", styles['CustomHeading']))
         
         distribution = summary.get('type_distribution', {})
-        dist_data = [
-            ['Equipment Type', 'Count']
-        ]
-        # Sort distribution by count descending for readability
-        sorted_distribution = sorted(distribution.items(), key=lambda item: item[1], reverse=True)
-        
-        for type_name, count in sorted_distribution:
-            dist_data.append([type_name, str(count)])
+        if distribution:
+            # Create bar chart
+            bar_chart_buffer = self.create_bar_chart(distribution, "Equipment Count by Type")
+            bar_chart_img = Image(bar_chart_buffer, width=6*inch, height=3.5*inch)
+            story.append(bar_chart_img)
+            story.append(Spacer(1, 0.3 * inch))
+            
+            # Create pie chart
+            pie_chart_buffer = self.create_pie_chart(distribution, "Equipment Type Distribution")
+            pie_chart_img = Image(pie_chart_buffer, width=5*inch, height=5*inch)
+            story.append(pie_chart_img)
+            story.append(Spacer(1, 0.2 * inch))
+            
+            # Add summary table below charts
+            dist_data = [['Equipment Type', 'Count', 'Percentage']]
+            total_count = sum(distribution.values())
+            sorted_distribution = sorted(distribution.items(), key=lambda item: item[1], reverse=True)
+            
+            for type_name, count in sorted_distribution:
+                percentage = (count / total_count * 100) if total_count > 0 else 0
+                dist_data.append([type_name, str(count), f"{percentage:.1f}%"])
 
-        # Define table style
-        dist_table = Table(dist_data, colWidths=[2 * inch, 2 * inch])
-        dist_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.lavender),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        story.append(dist_table)
+            dist_table = Table(dist_data, colWidths=[2.5*inch, 1*inch, 1*inch])
+            dist_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lavender),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ]))
+            story.append(dist_table)
         
         # 4. Build the PDF and return
         doc.build(story)

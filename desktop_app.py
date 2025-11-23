@@ -10,21 +10,16 @@ from PyQt5.QtWidgets import (
     QFileDialog, QDialog, QMessageBox, QTabWidget, QGridLayout,
     QListWidgetItem
 )
-from PyQt5.QtGui import QFont, QIcon, QColor # <--- QColor imported here
+from PyQt5.QtGui import QFont, QIcon, QColor
 from PyQt5.QtCore import Qt, QSize, QByteArray, QDateTime
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-# Ensure Matplotlib uses a dark style
 import matplotlib.pyplot as plt
 plt.style.use('dark_background')
 
-# --- CONFIGURATION ---
 API_BASE_URL = 'http://127.0.0.1:8000/api'
 REQUIRED_COLUMNS = ['Equipment Name', 'Type', 'Flowrate', 'Pressure', 'Temperature']
-# ---------------------
-
-# --- Matplotlib Canvas Class ---
 class MplCanvas(FigureCanvas):
     """A simple canvas class for embedding Matplotlib figures."""
     def __init__(self, parent=None, width=5, height=4, dpi=100):
@@ -64,25 +59,22 @@ class MplCanvas(FigureCanvas):
         labels = ['Flowrate', 'Pressure', 'Temperature']
         values = [averages.get('flowrate', 0.0), averages.get('pressure', 0.0), averages.get('temperature', 0.0)]
         
-        # Filter out zero values to avoid errors in pie chart
         valid_data = [(l, v) for l, v in zip(labels, values) if v > 0]
         labels = [item[0] for item in valid_data]
         values = [item[1] for item in valid_data]
 
-        colors = ['#f87171', '#34d399', '#60a5fa'] # Red, Green, Blue tones
+        colors = ['#f87171', '#34d399', '#60a5fa']
 
         wedges, texts, autotexts = self.axes.pie(
             values, labels=labels, autopct='%1.1f%%', startangle=90, 
             colors=colors, wedgeprops={'edgecolor': 'white'}
         )
         self.axes.set_title('Relative Parameter Averages', color='white')
-        self.axes.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+        self.axes.axis('equal')
         self.draw()
 
 
-# --- Login Dialog ---
 class LoginDialog(QDialog):
-    """Modal dialog for Basic Authentication."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("API Login")
@@ -150,13 +142,12 @@ class LoginDialog(QDialog):
             headers = {'Authorization': auth_token}
             self.status_label.setText("Authenticating...")
 
-            # Test authentication by hitting a protected endpoint
             response = requests.get(f"{API_BASE_URL}/history/", headers=headers, timeout=5)
             
             if response.status_code == 200:
                 self.auth_token = auth_token
                 self.username = user
-                self.accept() # Close dialog and return accepted status
+                self.accept()
             else:
                 self.status_label.setText(f"Login failed: {response.status_code} UNAUTHORIZED.")
                 self.auth_token = None
@@ -167,7 +158,6 @@ class LoginDialog(QDialog):
             self.auth_token = None
 
 
-# --- Main Application Window ---
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -178,7 +168,6 @@ class MainWindow(QMainWindow):
         self.current_summary = {}
         self.selected_dataset_id = None
 
-        # Dark Theme Styling
         self.setStyleSheet(
             """
             QMainWindow, QWidget { background-color: #121212; color: #ffffff; }
@@ -207,9 +196,7 @@ class MainWindow(QMainWindow):
 
         self.login_and_setup()
 
-
     def login_and_setup(self):
-        """Opens login dialog and sets up the main UI upon successful login."""
         login_dialog = LoginDialog(self)
         if login_dialog.exec_() == QDialog.Accepted:
             self.auth_token = login_dialog.auth_token
@@ -218,31 +205,24 @@ class MainWindow(QMainWindow):
             self.fetch_history()
         else:
             QMessageBox.warning(self, "Login Required", "Application requires successful API login to proceed.")
-            # Quit if login failed
             QApplication.quit() 
 
     def setup_ui(self):
-        """Initializes the main application layout after successful login."""
-        
-        # Clear previous layout elements
         for i in reversed(range(self.main_layout.count())): 
             widget = self.main_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
 
-        # 1. Left Sidebar (History & Upload)
         self.sidebar = QWidget()
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar.setFixedWidth(300)
         self.sidebar.setStyleSheet("background-color: #1e1e1e; padding: 10px; border-radius: 8px;")
 
-        # Logout Button
         self.logout_button = QPushButton("Logout", self)
         self.logout_button.setObjectName("Logout")
         self.logout_button.clicked.connect(self.logout)
         self.sidebar_layout.addWidget(self.logout_button)
         
-        # Upload Widget
         upload_group = QWidget()
         upload_layout = QVBoxLayout(upload_group)
         upload_layout.addWidget(QLabel("Upload CSV/Excel", objectName="SubTitle"))
@@ -256,20 +236,18 @@ class MainWindow(QMainWindow):
         
         self.upload_button = QPushButton("Upload & Analyze")
         self.upload_button.clicked.connect(self.upload_file)
-        self.upload_button.setEnabled(False) # Disabled until file is selected
+        self.upload_button.setEnabled(False)
 
         upload_layout.addWidget(self.file_path_label)
         upload_layout.addWidget(file_select_button)
         upload_layout.addWidget(self.upload_button)
         self.sidebar_layout.addWidget(upload_group)
 
-        # History List
         self.history_list = QListWidget()
         self.history_list.itemClicked.connect(self.load_summary)
         self.sidebar_layout.addWidget(QLabel("History (Last 5)", objectName="SubTitle"))
         self.sidebar_layout.addWidget(self.history_list)
         
-        # 2. Central Area (Visualization)
         self.vis_area = QWidget()
         self.vis_layout = QVBoxLayout(self.vis_area)
         
@@ -277,7 +255,6 @@ class MainWindow(QMainWindow):
         self.title_label.setObjectName("Title")
         self.vis_layout.addWidget(self.title_label)
 
-        # Tab Widget for Charts and Data
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet(
             """
@@ -287,7 +264,6 @@ class MainWindow(QMainWindow):
             """
         )
         
-        # Initialize Chart Widgets
         self.chart_widget = QWidget()
         self.chart_layout = QGridLayout(self.chart_widget)
         
@@ -301,56 +277,47 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(self.chart_widget, "Charts & Averages")
 
-        # Data Preview Label (simple placeholder)
         self.data_label = QLabel("Data Preview and Statistics will appear here.")
         self.data_label.setWordWrap(True)
         self.tab_widget.addTab(self.data_label, "Data & Stats")
 
         self.vis_layout.addWidget(self.tab_widget)
         
-        # PDF Download Button (Bottom)
         self.pdf_button = QPushButton("Download PDF Report")
         self.pdf_button.clicked.connect(self.download_pdf)
         self.pdf_button.setEnabled(False)
         self.vis_layout.addWidget(self.pdf_button)
         
-        # Splitter to hold sidebar and visualization area
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(self.sidebar)
         self.splitter.addWidget(self.vis_area)
         self.splitter.setSizes([300, 900])
         
         self.main_layout.addWidget(self.splitter)
-        self.main_layout.setContentsMargins(0, 0, 0, 0) # No margins on the main layout
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
 
     def logout(self):
-        """Clears credentials and closes the application."""
         self.auth_token = None
         self.username = None
         QApplication.quit()
-
-    # --- API Communication ---
 
     def get_headers(self):
         return {'Authorization': self.auth_token}
 
     def fetch_history(self):
-        """Fetches the latest 5 datasets and updates the list widget."""
         try:
             response = requests.get(f"{API_BASE_URL}/history/", headers=self.get_headers(), timeout=5)
-            response.raise_for_status() # Raise exception for bad status codes
+            response.raise_for_status()
             
             self.history_list.clear()
             datasets = response.json()
             
             for dataset in datasets:
                 item = QListWidgetItem(f"{dataset['name']}\n{dataset['timestamp']}")
-                # Store the ID in the item's data role
                 item.setData(Qt.UserRole, dataset['id']) 
                 self.history_list.addItem(item)
 
             if datasets and not self.selected_dataset_id:
-                # Automatically load the newest dataset if none is selected
                 newest_id = datasets[0]['id']
                 self.load_summary(self.history_list.item(0))
 
@@ -358,9 +325,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "API Error", f"Failed to fetch history: {e}")
             self.logout()
 
-
     def select_file(self):
-        """Opens a file dialog for CSV/Excel selection."""
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select CSV/Excel File", "", "Data Files (*.csv *.xlsx)"
         )
@@ -369,7 +334,6 @@ class MainWindow(QMainWindow):
             self.upload_button.setEnabled(True)
 
     def upload_file(self):
-        """Handles the file upload and analysis request."""
         file_path = self.file_path_label.text()
         if not file_path or not os.path.exists(file_path):
             QMessageBox.warning(self, "Upload Error", "Please select a valid file.")
@@ -381,7 +345,6 @@ class MainWindow(QMainWindow):
             with open(file_path, 'rb') as f:
                 files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
                 
-                # Use requests.post with 'files' argument for multipart/form-data
                 response = requests.post(
                     f"{API_BASE_URL}/upload/", 
                     headers=self.get_headers(), 
@@ -390,13 +353,22 @@ class MainWindow(QMainWindow):
                 )
                 response.raise_for_status()
                 
+                upload_data = response.json()
                 QMessageBox.information(self, "Success", f"File '{os.path.basename(file_path)}' uploaded and analyzed successfully.")
                 self.file_path_label.clear()
                 self.upload_button.setEnabled(False)
-                self.fetch_history() # Refresh history list
+                
+                self.fetch_history()
+                
+                if upload_data and 'id' in upload_data:
+                    for i in range(self.history_list.count()):
+                        item = self.history_list.item(i)
+                        if item.data(Qt.UserRole) == upload_data['id']:
+                            self.history_list.setCurrentItem(item)
+                            self.load_summary(item)
+                            break
 
         except requests.exceptions.HTTPError as e:
-            # Handle specific API errors (e.g., missing columns)
             try:
                 error_data = e.response.json()
                 error_msg = error_data.get('error', str(e))
@@ -410,9 +382,7 @@ class MainWindow(QMainWindow):
         finally:
             self.upload_button.setEnabled(True)
 
-
     def load_summary(self, item):
-        """Loads and visualizes the summary data for the selected history item."""
         dataset_id = item.data(Qt.UserRole)
         self.selected_dataset_id = dataset_id
         
@@ -431,7 +401,6 @@ class MainWindow(QMainWindow):
             self.pdf_button.setEnabled(False)
 
     def download_pdf(self):
-        """Fetches the PDF report and saves it locally."""
         if not self.selected_dataset_id:
             QMessageBox.warning(self, "Download Error", "Please select a dataset first.")
             return
@@ -445,12 +414,10 @@ class MainWindow(QMainWindow):
             )
             response.raise_for_status()
 
-            # Suggest a filename based on headers or use a default
             filename = response.headers.get('Content-Disposition', 'report.pdf')
             if 'filename=' in filename:
                 filename = filename.split('filename=')[1].strip('"\'')
             
-            # Open file dialog to choose save location
             save_path, _ = QFileDialog.getSaveFileName(
                 self, "Save PDF Report", filename, "PDF Files (*.pdf)"
             )
@@ -464,32 +431,31 @@ class MainWindow(QMainWindow):
         except requests.exceptions.RequestException as e:
             QMessageBox.critical(self, "API Error", f"Failed to download PDF: {e}")
 
-    # --- Visualization Updates ---
-
     def update_visualization(self):
-        """Rerenders charts and updates the data table/stats."""
         summary = self.current_summary
 
-        # 1. Update Charts
-        distribution = summary.get('type_distribution', {})
+        bar_data = summary.get('bar', {})
+        if bar_data and 'labels' in bar_data and 'values' in bar_data:
+            distribution = dict(zip(bar_data['labels'], bar_data['values']))
+        else:
+            distribution = summary.get('type_distribution', {})
+        
         self.bar_chart.update_bar_chart(distribution)
         
         averages = summary.get('averages', {})
         self.pie_chart.update_pie_chart(averages)
         
-        # 2. Update Data and Stats Tab
         stats_html = self.generate_stats_html(summary)
         self.data_label.setText(stats_html)
         self.data_label.setStyleSheet("background-color: #1e1e1e; color: #ffffff; padding: 15px;")
 
-
     def generate_stats_html(self, summary):
-        """Generates HTML content for the Data & Stats tab."""
-        # Simple HTML styling to match the dark theme
+        total_records = summary.get('records', summary.get('total_records', 'N/A'))
+        
         html = f"""
         <div style="font-family: Arial, sans-serif; background-color: #1e1e1e; color: #d1d5db; padding: 10px;">
             <h3 style="color: #4f46e5; margin-top: 0;">Overall Statistics</h3>
-            <p><strong>Total Records Processed:</strong> {summary.get('total_records', 'N/A')}</p>
+            <p><strong>Total Records Processed:</strong> {total_records}</p>
             
             <h3 style="color: #4f46e5; margin-top: 20px;">Parameter Averages</h3>
             <table style="width: 50%; border-collapse: collapse; color: #d1d5db;">
@@ -538,15 +504,12 @@ class MainWindow(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     
-    # Set global dark theme for file dialogs and other native widgets
     app.setStyle("Fusion") 
     
-    # Define a palette for the dark theme (used by Fusion style)
     palette = app.palette()
     palette.setColor(palette.Window, Qt.GlobalColor.black)
     palette.setColor(palette.WindowText, Qt.GlobalColor.white)
     palette.setColor(palette.Base, Qt.GlobalColor.darkGray)
-    # FIX: Replaced Qt.GlobalColor.darkerGray with QColor('#282828')
     palette.setColor(palette.AlternateBase, QColor('#282828')) 
     palette.setColor(palette.ToolTipBase, Qt.GlobalColor.white)
     palette.setColor(palette.ToolTipText, Qt.GlobalColor.black)
